@@ -2,13 +2,22 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 import pymupdf
 from openpyxl import Workbook
 from openpyxl.drawing.image import Image as SpreadsheetImage
 from PIL import Image, ImageDraw
 
-from app.engine import pdf_assets, run, xlsx_assets
+from app.engine import (
+    cv,
+    pdf_assets,
+    prepare_verification,
+    run,
+    verify,
+    verify_prepared,
+    xlsx_assets,
+)
 
 
 class MarkAssetExtractionTests(unittest.TestCase):
@@ -88,6 +97,14 @@ class MarkAssetExtractionTests(unittest.TestCase):
         self.assertEqual(assets[0]['mark'], 'Example mark')
         self.assertEqual(assets[0]['field_label'], 'Mark column logo')
 
+    def test_prepared_verification_preserves_existing_match_result(self):
+        image = cv(self.image_path)
+
+        self.assertEqual(
+            verify(image, image),
+            verify_prepared(prepare_verification(image), prepare_verification(image)),
+        )
+
     def test_xlsx_with_images_but_no_mark_header_reports_the_problem(self):
         xlsx_path = self.root / 'unlabeled.xlsx'
         workbook = Workbook()
@@ -102,6 +119,22 @@ class MarkAssetExtractionTests(unittest.TestCase):
 
         with self.assertRaisesRegex(ValueError, 'has no Mark/logo/device column'):
             xlsx_assets(xlsx_path, self.root, lambda *_: None)
+
+    def test_xlsx_reports_vector_images_that_cannot_be_rendered(self):
+        xlsx_path = self.root / 'unrenderable.xlsx'
+        workbook = Workbook()
+        sheet = workbook.active
+        sheet.append(['Application No.', 'Mark'])
+        sheet.append(['T/2026/002509', 'Example mark'])
+        workbook.save(xlsx_path)
+        workbook.close()
+
+        with (
+            patch('app.engine.ooxml_images', return_value=[('Sheet', 2, 2, b'wmf-data', '.wmf')]),
+            patch('app.engine.render_vector_bytes', return_value=None),
+        ):
+            with self.assertRaisesRegex(ValueError, 'Install ImageMagick or Inkscape'):
+                xlsx_assets(xlsx_path, self.root, lambda *_: None)
 
     def test_pdf_to_xlsx_logo_match_works_in_either_upload_order(self):
         pdf_path = self.root / 'government.pdf'

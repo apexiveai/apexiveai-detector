@@ -1,5 +1,6 @@
 from pathlib import Path
-import csv, hashlib, json, re, traceback, zipfile, io, math, shutil, subprocess, tempfile
+from functools import lru_cache
+import csv, hashlib, json, re, traceback, zipfile, io, math, shutil, subprocess, tempfile, sys
 import pymupdf
 import cv2
 import numpy as np
@@ -31,14 +32,58 @@ def cv(data):
         return cv2.imdecode(np.fromfile(str(data),np.uint8),cv2.IMREAD_COLOR)
     except Exception:return None
 
+def render_windows_metafile(src,dst):
+    if sys.platform!='win32':return None
+    import ctypes
+    from ctypes import wintypes
+
+    class StartupInput(ctypes.Structure):
+        _fields_=[
+            ('GdiplusVersion',wintypes.UINT),
+            ('DebugEventCallback',ctypes.c_void_p),
+            ('SuppressBackgroundThread',wintypes.BOOL),
+            ('SuppressExternalCodecs',wintypes.BOOL),
+        ]
+
+    gdiplus=ctypes.WinDLL('gdiplus')
+    token=ctypes.c_size_t()
+    startup=StartupInput(1,None,False,False)
+    if gdiplus.GdiplusStartup(ctypes.byref(token),ctypes.byref(startup),None)!=0:return None
+    metafile=ctypes.c_void_p()
+    bitmap=ctypes.c_void_p()
+    graphics=ctypes.c_void_p()
+    try:
+        if gdiplus.GdipCreateMetafileFromFile(str(src),ctypes.byref(metafile))!=0:return None
+        width=wintypes.UINT();height=wintypes.UINT()
+        if gdiplus.GdipGetImageWidth(metafile,ctypes.byref(width))!=0:return None
+        if gdiplus.GdipGetImageHeight(metafile,ctypes.byref(height))!=0:return None
+        if not width.value or not height.value:return None
+        if width.value>12000 or height.value>12000:return None
+        if gdiplus.GdipCreateBitmapFromScan0(width.value,height.value,0,0x26200A,None,ctypes.byref(bitmap))!=0:return None
+        if gdiplus.GdipGetImageGraphicsContext(bitmap,ctypes.byref(graphics))!=0:return None
+        if gdiplus.GdipGraphicsClear(graphics,0xFFFFFFFF)!=0:return None
+        if gdiplus.GdipDrawImageRectI(graphics,metafile,0,0,width.value,height.value)!=0:return None
+        png_encoder=ctypes.c_byte*16
+        encoder_id=png_encoder(0x06,0xF4,0x7C,0x55,0x04,0x1A,0xD3,0x11,0x9A,0x73,0x00,0x00,0xF8,0x1E,0xF3,0x2E)
+        if gdiplus.GdipSaveImageToFile(bitmap,str(dst),ctypes.byref(encoder_id),None)!=0:return None
+        return cv(dst)
+    finally:
+        if graphics:gdiplus.GdipDeleteGraphics(graphics)
+        if bitmap:gdiplus.GdipDisposeImage(bitmap)
+        if metafile:gdiplus.GdipDisposeImage(metafile)
+        gdiplus.GdiplusShutdown(token)
+
 def render_vector_bytes(data,ext):
     suffix=ext if ext.startswith('.') else '.'+ext
     with tempfile.TemporaryDirectory() as td:
         src=Path(td)/('asset'+suffix);dst=Path(td)/'asset.png';src.write_bytes(data)
+        if suffix in {'.emf','.wmf'}:
+            im=render_windows_metafile(src,dst)
+            if im is not None:return im
         magick=shutil.which('magick');ink=shutil.which('inkscape')
         cmds=[]
         if magick:cmds.append([magick,'-density','300',str(src),'-background','white','-alpha','remove','-alpha','off',str(dst)])
-        if ink and suffix in {'.svg','.emf'}:cmds.append([ink,str(src),'--export-type=png','--export-filename='+str(dst)])
+        if ink and suffix in {'.svg','.emf','.wmf'}:cmds.append([ink,str(src),'--export-type=png','--export-filename='+str(dst)])
         for cmd in cmds:
             try:
                 p=subprocess.run(cmd,capture_output=True,timeout=45)
@@ -82,12 +127,14 @@ def hashes(g):
     ph=bits((d>med).astype(np.uint8));dhg=cv2.resize(g,(9,8),interpolation=cv2.INTER_AREA);dh=bits((dhg[:,1:]>dhg[:,:-1]).astype(np.uint8));ahg=cv2.resize(g,(8,8),interpolation=cv2.INTER_AREA);ah=bits((ahg>ahg.mean()).astype(np.uint8))
     return ph,dh,ah
 
-def fp(img):
-    g=canonical(img)
-    if g is None:return {}
+def fingerprint_from_canonical(g):
     m=logo_mask(g)
     ph,dh,ah=hashes(g)
     return {'sha256':hashlib.sha256(g.tobytes()).hexdigest(),'mask_sha256':hashlib.sha256(m.tobytes()).hexdigest(),'phash':ph,'dhash':dh,'ahash':ah}
+
+def fp(img):
+    g=canonical(img)
+    return fingerprint_from_canonical(g) if g is not None else {}
 
 def fast_score(a,b):
     ga,gb=canonical(a),canonical(b)
@@ -95,31 +142,47 @@ def fast_score(a,b):
     fa,fb=hashes(ga),hashes(gb)
     return .55*(1-hamming(fa[0],fb[0])/64)+.30*(1-hamming(fa[1],fb[1])/64)+.15*(1-hamming(fa[2],fb[2])/64)
 
-def contour_similarity(a,b):
-    def sig(x):
-        g=gray(x);m=logo_mask(g);cs,_=cv2.findContours(m,cv2.RETR_EXTERNAL,cv2.CHAIN_APPROX_SIMPLE)
-        if not cs:return None
-        c=max(cs,key=cv2.contourArea); hu=cv2.HuMoments(cv2.moments(c)).flatten();hu=np.sign(hu)*np.log10(np.abs(hu)+1e-30);x,y,w,h=cv2.boundingRect(c)
-        return hu,cv2.contourArea(c)/(g.shape[0]*g.shape[1]),w/g.shape[1],h/g.shape[0]
-    x,y=sig(a),sig(b)
+def contour_signature(img):
+    g=gray(img);m=logo_mask(g);contours,_=cv2.findContours(m,cv2.RETR_EXTERNAL,cv2.CHAIN_APPROX_SIMPLE)
+    if not contours:return None
+    contour=max(contours,key=cv2.contourArea);hu=cv2.HuMoments(cv2.moments(contour)).flatten();hu=np.sign(hu)*np.log10(np.abs(hu)+1e-30);x,y,w,h=cv2.boundingRect(contour)
+    return hu,cv2.contourArea(contour)/(g.shape[0]*g.shape[1]),w/g.shape[1],h/g.shape[0]
+
+def contour_similarity_from_signatures(x,y):
     if not x or not y:return 0
     hu=.0
     for i in range(7):hu+=min(abs(float(x[0][i]-y[0][i]))/10,1)
     hu=1-hu/7;ar=1-abs(x[1]-y[1])/max(x[1],y[1],1e-6);sh=1-(abs(x[2]-y[2])+abs(x[3]-y[3]))/2
     return max(0,min(1,.55*hu+.25*ar+.20*sh))
 
-def verify(a,b):
-    ga,gb=canonical(a),canonical(b)
-    if ga is None or gb is None:return 0,{},False
-    fa,fb=fp(a),fp(b);ph=1-hamming(fa['phash'],fb['phash'])/64;dh=1-hamming(fa['dhash'],fb['dhash'])/64;ah=1-hamming(fa['ahash'],fb['ahash']);ss=float(ssim(ga,gb,data_range=255));cs=contour_similarity(a,b)
-    sift=cv2.SIFT_create(nfeatures=600);k1,d1=sift.detectAndCompute(ga,None);k2,d2=sift.detectAndCompute(gb,None);good=[];inl=0
+def contour_similarity(a,b):
+    return contour_similarity_from_signatures(contour_signature(a),contour_signature(b))
+
+def prepare_verification(img):
+    g=canonical(img)
+    if g is None:return {}
+    sift=cv2.SIFT_create(nfeatures=600);keypoints,descriptors=sift.detectAndCompute(g,None)
+    return {
+        'canonical':g,
+        'fingerprint':fingerprint_from_canonical(g),
+        'mask':logo_mask(g),
+        'keypoints':keypoints,
+        'descriptors':descriptors,
+        'contour':contour_signature(img),
+    }
+
+def verify_prepared(first,second):
+    if not first or not second:return 0,{},False
+    ga,gb=first['canonical'],second['canonical']
+    fa,fb=first['fingerprint'],second['fingerprint'];ph=1-hamming(fa['phash'],fb['phash'])/64;dh=1-hamming(fa['dhash'],fb['dhash'])/64;ah=1-hamming(fa['ahash'],fb['ahash']);ss=float(ssim(ga,gb,data_range=255));cs=contour_similarity_from_signatures(first['contour'],second['contour'])
+    k1,d1=first['keypoints'],first['descriptors'];k2,d2=second['keypoints'],second['descriptors'];good=[];inl=0
     if d1 is not None and d2 is not None:
         for pair in cv2.BFMatcher().knnMatch(d1,d2,k=2):
             if len(pair)==2 and pair[0].distance<.72*pair[1].distance:good.append(pair[0])
         if len(good)>=4:
             src=np.float32([k1[m.queryIdx].pt for m in good]).reshape(-1,1,2);dst=np.float32([k2[m.trainIdx].pt for m in good]).reshape(-1,1,2)
             _,mask=cv2.findHomography(src,dst,cv2.RANSAC,4);inl=int(mask.sum()) if mask is not None else 0
-    ma,mb=logo_mask(ga),logo_mask(gb);best_iou=0;best_ms=0
+    ma,mb=first['mask'],second['mask'];best_iou=0;best_ms=0
     for ang in (0,-2,2,-4,4):
         M=cv2.getRotationMatrix2D((128,128),ang,1);rb=cv2.warpAffine(mb,M,(256,256),borderValue=0);inter=np.logical_and(ma>0,rb>0).sum();union=np.logical_or(ma>0,rb>0).sum();iou=inter/max(union,1);ms=float(ssim(ma,rb,data_range=255));
         if iou>best_iou or (iou==best_iou and ms>best_ms):best_iou,best_ms=iou,ms
@@ -127,6 +190,9 @@ def verify(a,b):
     final=.18*max(ph,0)+.10*max(dh,0)+.05*max(ah,0)+.20*max(ss,0)+.17*cs+.30*min(1,inl/12)
     if exact:final=max(final,.995)
     return float(final),{'phash':round(ph,4),'dhash':round(dh,4),'ahash':round(ah,4),'ssim':round(ss,5),'contour_similarity':round(cs,5),'mask_iou':round(best_iou,5),'mask_ssim':round(best_ms,5),'sift_good':len(good),'sift_inliers':inl,'canonical_sha256':fa['sha256'],'mask_sha256':fa['mask_sha256']},exact
+
+def verify(a,b):
+    return verify_prepared(prepare_verification(a),prepare_verification(b))
 
 def app_metadata(text):
     m=APP_RE.search(text or '')
@@ -228,29 +294,50 @@ def ooxml_images(path):
     return result
 
 def xlsx_assets(path,out,progress):
-    wb=load_workbook(path,data_only=True);raw=ooxml_images(path);assets=[];asset_no=0
+    progress(45,'Reading workbook values and indexing embedded images')
+    raw=ooxml_images(path);wb=load_workbook(path,data_only=True,read_only=True,keep_links=False);assets=[];asset_no=0
     image_sheets={image[0] for image in raw}
-    for ws in wb.worksheets:
-        mark_col=None;headers={}
-        for r in range(1,min(20,ws.max_row)+1):
-            for c in range(1,ws.max_column+1):
-                v=re.sub(r'[^a-z0-9]+','',str(ws.cell(r,c).value or '').lower())
-                if v in MARK_HEADERS and mark_col is None:mark_col=c
-                if 'app' in v and ('no' in v or 'number' in v):headers.setdefault('app',c)
-                if any(k in v for k in ('company','applicant','owner')):headers.setdefault('company',c)
-        if mark_col is None:
-            if ws.title in image_sheets:raise ValueError(f"Worksheet '{ws.title}' contains images but has no Mark/logo/device column")
-            continue
-        byrow={}
-        for sh,row,col,data,ext in raw:
-            if sh!=ws.title or col!=mark_col or row>ws.max_row:continue
-            im=cv(data)
-            if im is None and ext in {'.wmf','.emf','.svg'}: im=render_vector_bytes(data,ext)
-            if im is not None:byrow.setdefault(row,[]).append((im,row,col,ext))
-        for row,items in byrow.items():
-            app=str(ws.cell(row,headers.get('app',1)).value or '');company=str(ws.cell(row,headers.get('company',2)).value or '') if ws.max_column>=2 else '';mark=str(ws.cell(row,mark_col).value or '')
-            for im,rr,col,ext in items:
-                asset_no+=1;fn=f'B_{asset_no:06d}.png';cv2.imwrite(str(out/fn),im);assets.append({'asset_id':f'B-{asset_no:06d}','source_type':'xlsx','source_file':path.name,'sheet':ws.title,'row':row,'column':col,'application_no':norm_app(app) or app,'company':company,'mark':mark,'field_code':'Mark','field_label':'Mark column logo','image_file':fn,'extract_method':'xlsx_mark_column_image','media_ext':ext})
+    try:
+        for ws in wb.worksheets:
+            max_row=ws.max_row or 0;max_col=max(ws.max_column or 0,1)
+            mark_col=None;headers={}
+            header_end=min(20,max_row)
+            if header_end:
+                for r,row_values in enumerate(ws.iter_rows(min_row=1,max_row=header_end,max_col=max_col,values_only=True),1):
+                    for c,value in enumerate(row_values,1):
+                        v=re.sub(r'[^a-z0-9]+','',str(value or '').lower())
+                        if v in MARK_HEADERS and mark_col is None:mark_col=c
+                        if 'app' in v and ('no' in v or 'number' in v):headers.setdefault('app',c)
+                        if any(k in v for k in ('company','applicant','owner')):headers.setdefault('company',c)
+            if mark_col is None:
+                if ws.title in image_sheets:raise ValueError(f"Worksheet '{ws.title}' contains images but has no Mark/logo/device column")
+                continue
+            byrow={}
+            for sh,row,col,data,ext in raw:
+                if sh!=ws.title or col!=mark_col or row>max_row:continue
+                im=cv(data)
+                if im is None and ext in {'.wmf','.emf','.svg'}: im=render_vector_bytes(data,ext)
+                if im is None:
+                    message=f"Could not decode embedded {ext.lstrip('.').upper()} image in worksheet '{ws.title}' at row {row}, column {col}."
+                    if ext in {'.wmf','.emf','.svg'}:message+=' Install ImageMagick or Inkscape with support for this format and retry.'
+                    else:message+=' The image may be damaged or use an unsupported format.'
+                    raise ValueError(message)
+                byrow.setdefault(row,[]).append((im,row,col,ext))
+            if not byrow:continue
+            value_columns=[mark_col,headers.get('app',1)]
+            if max_col>=2:value_columns.append(headers.get('company',2))
+            values_by_row={}
+            first_row=min(byrow);last_row=max(byrow);value_max_col=max(value_columns)
+            for row,row_values in enumerate(ws.iter_rows(min_row=first_row,max_row=last_row,max_col=value_max_col,values_only=True),first_row):
+                if row in byrow:values_by_row[row]=row_values
+            for row,items in byrow.items():
+                row_values=values_by_row[row]
+                cell=lambda column:row_values[column-1] if column<=len(row_values) else None
+                app=str(cell(headers.get('app',1)) or '');company=str(cell(headers.get('company',2)) or '') if max_col>=2 else '';mark=str(cell(mark_col) or '')
+                for im,rr,col,ext in items:
+                    asset_no+=1;fn=f'B_{asset_no:06d}.png';cv2.imwrite(str(out/fn),im);assets.append({'asset_id':f'B-{asset_no:06d}','source_type':'xlsx','source_file':path.name,'sheet':ws.title,'row':row,'column':col,'application_no':norm_app(app) or app,'company':company,'mark':mark,'field_code':'Mark','field_label':'Mark column logo','image_file':fn,'extract_method':'xlsx_mark_column_image','media_ext':ext})
+    finally:
+        wb.close()
     progress(50,f'Extracting XLSX: {len(assets)} images')
     return assets
 
@@ -312,16 +399,21 @@ def run(job_dir,file_a,file_b,update):
             if f.get('sha256'):bysha.setdefault(f['sha256'],[]).append(b)
             for key in (f.get('phash'),f.get('dhash'),f.get('ahash')):
                 if key:buckets.setdefault(key[:4],[]).append(b)
+        @lru_cache(maxsize=128)
+        def prepared_file(image_file):
+            return prepare_verification(cv(work/image_file))
         matches=[];matched_b=set();total=len(A)
         for idx,a in enumerate(A):
-            aim=cv(work/a['image_file']);af=fp(aim);cands=[];seen=set()
+            aim=cv(work/a['image_file']);af=fp(aim);prepared_a=None;cands=[];seen=set()
             for b in bysha.get(af.get('sha256'),[]):cands.append((1.0,b,'exact_hash'));seen.add(b['asset_id'])
             keys=[]
             for key in (af.get('phash'),af.get('dhash'),af.get('ahash')):
                 if key:keys.append(key[:4])
             for key in keys:
                 for b in buckets.get(key,[]):
-                    if b['asset_id'] not in seen:cands.append((fast_score(aim,cv(work/b['image_file'])),b,'hash_candidate'));seen.add(b['asset_id'])
+                    if b['asset_id'] not in seen:
+                        f=b['_fp'];score=.55*(1-hamming(af['phash'],f['phash'])/64)+.30*(1-hamming(af['dhash'],f['dhash'])/64)+.15*(1-hamming(af['ahash'],f['ahash'])/64)
+                        cands.append((score,b,'hash_candidate'));seen.add(b['asset_id'])
             # Avoid an exhaustive quadratic scan for large catalogs.
             if len(cands)<12 and len(Bfp)<=1000:
                 top=[]
@@ -338,7 +430,8 @@ def run(job_dir,file_a,file_b,update):
                     score=1.0;exact=True
                     detail={'phash':1.0,'dhash':1.0,'ahash':1.0,'ssim':1.0,'contour_similarity':1.0,'mask_iou':1.0,'mask_ssim':1.0,'sift_good':0,'sift_inliers':0,'canonical_sha256':af['sha256'],'mask_sha256':af['mask_sha256']}
                 else:
-                    score,detail,exact=verify(aim,cv(work/b['image_file']))
+                    if prepared_a is None:prepared_a=prepare_verification(aim)
+                    score,detail,exact=verify_prepared(prepared_a,prepared_file(b['image_file']))
                 if exact:decision='EXACT_VISUAL_IDENTITY'
                 elif score>=.82:decision='VERY_HIGH_VISUAL_SIMILARITY'
                 elif score>=.70:decision='HIGH_VISUAL_SIMILARITY'
