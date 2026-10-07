@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { DragEvent, ReactNode } from "react";
 import { AnimatePresence, motion } from "framer-motion";
+import ProductAccessGate from "../components/ProductAccessGate";
 import {
   AlertTriangle,
   ArrowRight,
@@ -152,206 +153,211 @@ function App() {
   const fileUrl = (name: string) => `${API_URL}/api/jobs/${job?.job_id}/files/${encodeURIComponent(name)}`;
 
   return (
-    <main className="app-shell">
-      <div className="aurora aurora-a" />
-      <div className="aurora aurora-b" />
-      <div className="grid-noise" />
+    <ProductAccessGate
+      productKey="trademark"
+      productName="Trademark Conflict Detector"
+    >
+      <main className="app-shell">
+        <div className="aurora aurora-a" />
+        <div className="aurora aurora-b" />
+        <div className="grid-noise" />
 
-      <header className="topbar">
-        <div className="brand-lockup">
+        <header className="topbar">
+          <div className="brand-lockup">
+            <motion.div
+              className="brand-orbit"
+              animate={{ rotate: 360 }}
+              transition={{ duration: 18, repeat: Infinity, ease: "linear" }}
+            >
+              <span />
+            </motion.div>
+            <div>
+              <div className="brand-name">APEXIVE AI</div>
+              <div className="brand-sub">LEGAL INTELLIGENCE SYSTEM</div>
+            </div>
+          </div>
+          <div className="top-status"><CircleDot size={12} /> ENGINE ONLINE <span>v3.0</span></div>
+        </header>
+
+        <section className="hero">
           <motion.div
-            className="brand-orbit"
-            animate={{ rotate: 360 }}
-            transition={{ duration: 18, repeat: Infinity, ease: "linear" }}
-          >
-            <span />
-          </motion.div>
-          <div>
-            <div className="brand-name">APEXIVE AI</div>
-            <div className="brand-sub">LEGAL INTELLIGENCE SYSTEM</div>
-          </div>
-        </div>
-        <div className="top-status"><CircleDot size={12} /> ENGINE ONLINE <span>v3.0</span></div>
-      </header>
-
-      <section className="hero">
-        <motion.div
-          className="eyebrow"
-          initial={{ opacity: 0, y: 12 }}
-          animate={{ opacity: 1, y: 0 }}
-        >
-          <Sparkles size={14} /> VISUAL EVIDENCE • DOCUMENT INTELLIGENCE
-        </motion.div>
-        <motion.h1
-          initial={{ opacity: 0, y: 25, scale: 0.98 }}
-          animate={{ opacity: 1, y: 0, scale: 1 }}
-          transition={{ duration: 0.65 }}
-        >
-          Trademark <span>Conflict</span><br />Detector
-        </motion.h1>
-        <p>
-          Compare trademark records across PDFs and workbooks with deterministic image evidence,
-          application-number checks, structural verification and report-ready coordinates.
-        </p>
-
-<div className="hero-pills">
-  {[
-    [Fingerprint, "SHA / pHash / dHash"],
-    [Radar, "SSIM / contour / SIFT"],
-    [Database, "6,000 × 6,000 ready"],
-  ].map(([Icon, text], index) => {
-    const I = Icon as typeof Fingerprint;
-    const label = text as string;
-
-    return (
-      <motion.div
-        key={label}
-        className="hero-pill"
-        animate={{
-          y: [0, -4, 0],
-        }}
-        transition={{
-          duration: 2.2,
-          delay: index * 0.2,
-          repeat: Infinity,
-        }}
-      >
-        <I size={15} />
-        {label}
-      </motion.div>
-    );
-  })}
-</div>
-      </section>
-
-      <section className="workspace">
-        <div className="compare-line" aria-hidden="true">
-          <motion.div className="beam beam-left" animate={{ opacity: [0.25, 1, 0.25] }} transition={{ duration: 1.6, repeat: Infinity }} />
-          <motion.div className="core-bounce" animate={{ y: [0, -16, 0], scale: [1, 1.08, 1] }} transition={{ duration: 1.55, repeat: Infinity, ease: "easeInOut" }}>
-            <Zap size={21} />
-          </motion.div>
-          <motion.div className="beam beam-right" animate={{ opacity: [1, 0.25, 1] }} transition={{ duration: 1.6, repeat: Infinity }} />
-        </div>
-
-        <UploadCard
-          title="Source A"
-          subtitle="PDF, XLSX, or XLSM trademark records"
-          file={sourceA}
-          icon={<FileText />}
-          dragging={dragging === "source-a"}
-          onDrag={(value) => setDragging(value ? "source-a" : null)}
-          onDrop={(event) => onDrop(event, "source-a")}
-          onFile={(file) => acceptFile(file, "source-a")}
-          accent="violet"
-        />
-
-        <div className="versus">VS</div>
-
-        <UploadCard
-          title="Source B"
-          subtitle="PDF, XLSX, or XLSM trademark records"
-          file={sourceB}
-          icon={<FileSpreadsheet />}
-          dragging={dragging === "source-b"}
-          onDrag={(value) => setDragging(value ? "source-b" : null)}
-          onDrop={(event) => onDrop(event, "source-b")}
-          onFile={(file) => acceptFile(file, "source-b")}
-          accent="cyan"
-        />
-      </section>
-
-      <section className="control-panel">
-        <div className="control-copy">
-          <div className="control-icon"><LockKeyhole size={18} /></div>
-          <div>
-            <strong>Evidence-first analysis</strong>
-            <span>Application number equality is tracked separately from visual identity.</span>
-          </div>
-        </div>
-        <motion.button
-          className="analyze-button"
-          disabled={!sourceA || !sourceB || busy}
-          onClick={startAnalysis}
-          whileHover={{ scale: 1.02 }}
-          whileTap={{ scale: 0.97 }}
-        >
-          {busy ? <LoaderCircle className="spin" size={19} /> : <ScanSearch size={19} />}
-          {busy ? "ANALYZING…" : "RUN PREMIUM ANALYSIS"}
-          {!busy && <ArrowRight size={17} />}
-        </motion.button>
-      </section>
-
-      <AnimatePresence>
-        {error && (
-          <motion.div className="alert error" initial={{ opacity: 0, y: -8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }}>
-            <AlertTriangle size={18} /> {error}
-          </motion.div>
-        )}
-      </AnimatePresence>
-
-      <AnimatePresence mode="wait">
-        {job && (
-          <motion.section
-            className="results-card"
-            key={job.job_id || "job"}
-            initial={{ opacity: 0, y: 25 }}
+            className="eyebrow"
+            initial={{ opacity: 0, y: 12 }}
             animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.45 }}
           >
-            <div className="results-head">
-              <div>
-                <div className="section-kicker"><Gauge size={14} /> LIVE ANALYSIS TELEMETRY</div>
-                <h2>{completed ? "Evidence package ready" : failed ? "Analysis stopped" : "Engine is processing"}</h2>
-              </div>
-              <div className={`state-badge ${completed ? "ok" : failed ? "bad" : "live"}`}>
-                {completed ? <CheckCircle2 size={14} /> : failed ? <AlertTriangle size={14} /> : <LoaderCircle className="spin" size={14} />}
-                {String(job.status || "queued").toUpperCase()}
-              </div>
+            <Sparkles size={14} /> VISUAL EVIDENCE • DOCUMENT INTELLIGENCE
+          </motion.div>
+          <motion.h1
+            initial={{ opacity: 0, y: 25, scale: 0.98 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            transition={{ duration: 0.65 }}
+          >
+            Trademark <span>Conflict</span><br />Detector
+          </motion.h1>
+          <p>
+            Compare trademark records across PDFs and workbooks with deterministic image evidence,
+            application-number checks, structural verification and report-ready coordinates.
+          </p>
+
+          <div className="hero-pills">
+            {[
+              [Fingerprint, "SHA / pHash / dHash"],
+              [Radar, "SSIM / contour / SIFT"],
+              [Database, "6,000 × 6,000 ready"],
+            ].map(([Icon, text], index) => {
+              const I = Icon as typeof Fingerprint;
+              const label = text as string;
+
+              return (
+                <motion.div
+                  key={label}
+                  className="hero-pill"
+                  animate={{
+                    y: [0, -4, 0],
+                  }}
+                  transition={{
+                    duration: 2.2,
+                    delay: index * 0.2,
+                    repeat: Infinity,
+                  }}
+                >
+                  <I size={15} />
+                  {label}
+                </motion.div>
+              );
+            })}
+          </div>
+        </section>
+
+        <section className="workspace">
+          <div className="compare-line" aria-hidden="true">
+            <motion.div className="beam beam-left" animate={{ opacity: [0.25, 1, 0.25] }} transition={{ duration: 1.6, repeat: Infinity }} />
+            <motion.div className="core-bounce" animate={{ y: [0, -16, 0], scale: [1, 1.08, 1] }} transition={{ duration: 1.55, repeat: Infinity, ease: "easeInOut" }}>
+              <Zap size={21} />
+            </motion.div>
+            <motion.div className="beam beam-right" animate={{ opacity: [1, 0.25, 1] }} transition={{ duration: 1.6, repeat: Infinity }} />
+          </div>
+
+          <UploadCard
+            title="Source A"
+            subtitle="PDF, XLSX, or XLSM trademark records"
+            file={sourceA}
+            icon={<FileText />}
+            dragging={dragging === "source-a"}
+            onDrag={(value) => setDragging(value ? "source-a" : null)}
+            onDrop={(event) => onDrop(event, "source-a")}
+            onFile={(file) => acceptFile(file, "source-a")}
+            accent="violet"
+          />
+
+          <div className="versus">VS</div>
+
+          <UploadCard
+            title="Source B"
+            subtitle="PDF, XLSX, or XLSM trademark records"
+            file={sourceB}
+            icon={<FileSpreadsheet />}
+            dragging={dragging === "source-b"}
+            onDrag={(value) => setDragging(value ? "source-b" : null)}
+            onDrop={(event) => onDrop(event, "source-b")}
+            onFile={(file) => acceptFile(file, "source-b")}
+            accent="cyan"
+          />
+        </section>
+
+        <section className="control-panel">
+          <div className="control-copy">
+            <div className="control-icon"><LockKeyhole size={18} /></div>
+            <div>
+              <strong>Evidence-first analysis</strong>
+              <span>Application number equality is tracked separately from visual identity.</span>
             </div>
+          </div>
+          <motion.button
+            className="analyze-button"
+            disabled={!sourceA || !sourceB || busy}
+            onClick={startAnalysis}
+            whileHover={{ scale: 1.02 }}
+            whileTap={{ scale: 0.97 }}
+          >
+            {busy ? <LoaderCircle className="spin" size={19} /> : <ScanSearch size={19} />}
+            {busy ? "ANALYZING…" : "RUN PREMIUM ANALYSIS"}
+            {!busy && <ArrowRight size={17} />}
+          </motion.button>
+        </section>
 
-            <div className="progress-wrap">
-              <div className="progress-label"><span>ENGINE PROGRESS</span><b>{progress}%</b></div>
-              <div className="progress-track"><motion.div className="progress-bar" animate={{ width: `${progress}%` }} transition={{ ease: "easeOut" }} /></div>
-            </div>
+        <AnimatePresence>
+          {error && (
+            <motion.div className="alert error" initial={{ opacity: 0, y: -8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }}>
+              <AlertTriangle size={18} /> {error}
+            </motion.div>
+          )}
+        </AnimatePresence>
 
-            <div className="stats-grid">
-              {stats.map((stat, i) => {
-                const I = stat.icon;
-                return <motion.div className="stat" key={stat.label} animate={{ y: [0, i % 2 ? -3 : 0, 0] }} transition={{ duration: 2.4, repeat: Infinity, delay: i * 0.15 }}><I size={17} /><span>{stat.label}</span><strong>{stat.value}</strong></motion.div>;
-              })}
-            </div>
-
-            {completed && (
-              <div className="download-grid">
-                {(job.files || []).map((name) => (
-                  <a className="download-card" key={name} href={fileUrl(name)} target="_blank" rel="noreferrer">
-                    <Download size={17} />
-                    <span>{name}</span>
-                    <ChevronRight size={16} />
-                  </a>
-                ))}
+        <AnimatePresence mode="wait">
+          {job && (
+            <motion.section
+              className="results-card"
+              key={job.job_id || "job"}
+              initial={{ opacity: 0, y: 25 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ duration: 0.45 }}
+            >
+              <div className="results-head">
+                <div>
+                  <div className="section-kicker"><Gauge size={14} /> LIVE ANALYSIS TELEMETRY</div>
+                  <h2>{completed ? "Evidence package ready" : failed ? "Analysis stopped" : "Engine is processing"}</h2>
+                </div>
+                <div className={`state-badge ${completed ? "ok" : failed ? "bad" : "live"}`}>
+                  {completed ? <CheckCircle2 size={14} /> : failed ? <AlertTriangle size={14} /> : <LoaderCircle className="spin" size={14} />}
+                  {String(job.status || "queued").toUpperCase()}
+                </div>
               </div>
-            )}
 
-            {failed && <div className="alert error inline"><AlertTriangle size={17} /> {job.error || "Unknown engine error."}</div>}
+              <div className="progress-wrap">
+                <div className="progress-label"><span>ENGINE PROGRESS</span><b>{progress}%</b></div>
+                <div className="progress-track"><motion.div className="progress-bar" animate={{ width: `${progress}%` }} transition={{ ease: "easeOut" }} /></div>
+              </div>
 
-            {(completed || failed) && <button className="reset-button" onClick={reset}><RefreshCw size={15} /> NEW ANALYSIS</button>}
-          </motion.section>
-        )}
-      </AnimatePresence>
+              <div className="stats-grid">
+                {stats.map((stat, i) => {
+                  const I = stat.icon;
+                  return <motion.div className="stat" key={stat.label} animate={{ y: [0, i % 2 ? -3 : 0, 0] }} transition={{ duration: 2.4, repeat: Infinity, delay: i * 0.15 }}><I size={17} /><span>{stat.label}</span><strong>{stat.value}</strong></motion.div>;
+                })}
+              </div>
 
-      <section className="spec-grid">
-        <Spec icon={<ShieldCheck />} title="Deterministic evidence" text="SHA-256, normalized visual hashes, mask overlap, SSIM, contour and SIFT agreement." />
-        <Spec icon={<FileText />} title="PDF → PDF" text="Government journal records remain the authoritative source for page coordinates." />
-        <Spec icon={<FileSpreadsheet />} title="XLSX → XLSX" text="Workbook rows and embedded media are mapped back to application records." />
-        <Spec icon={<ArrowRight />} title="PDF ↔ XLSX" text="Cross-format evidence pairs are generated with marked PDF and XLSX reports." />
-      </section>
+              {completed && (
+                <div className="download-grid">
+                  {(job.files || []).map((name) => (
+                    <a className="download-card" key={name} href={fileUrl(name)} target="_blank" rel="noreferrer">
+                      <Download size={17} />
+                      <span>{name}</span>
+                      <ChevronRight size={16} />
+                    </a>
+                  ))}
+                </div>
+              )}
 
-      <footer>
-        <span>APEXIVE AI • TRADEMARK CONFLICT DETECTOR</span>
-        <span>Technical evidence only • Human / legal review required</span>
-      </footer>
-    </main>
+              {failed && <div className="alert error inline"><AlertTriangle size={17} /> {job.error || "Unknown engine error."}</div>}
+
+              {(completed || failed) && <button className="reset-button" onClick={reset}><RefreshCw size={15} /> NEW ANALYSIS</button>}
+            </motion.section>
+          )}
+        </AnimatePresence>
+
+        <section className="spec-grid">
+          <Spec icon={<ShieldCheck />} title="Deterministic evidence" text="SHA-256, normalized visual hashes, mask overlap, SSIM, contour and SIFT agreement." />
+          <Spec icon={<FileText />} title="PDF → PDF" text="Government journal records remain the authoritative source for page coordinates." />
+          <Spec icon={<FileSpreadsheet />} title="XLSX → XLSX" text="Workbook rows and embedded media are mapped back to application records." />
+          <Spec icon={<ArrowRight />} title="PDF ↔ XLSX" text="Cross-format evidence pairs are generated with marked PDF and XLSX reports." />
+        </section>
+
+        <footer>
+          <span>APEXIVE AI • TRADEMARK CONFLICT DETECTOR</span>
+          <span>Technical evidence only • Human / legal review required</span>
+        </footer>
+      </main>
+    </ProductAccessGate>
   );
 }
 
